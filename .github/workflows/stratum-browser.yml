@@ -32,6 +32,7 @@ jobs:
         with:
           name: browser
           path: stratum/out/usr/share/coolwsd/browser
+          include-hidden-files: true
 
   compare-with-stock:
     needs: build
@@ -64,7 +65,35 @@ jobs:
           echo "--- in both, same size but different bytes"
           join -t$'\t' stock.tsv built.tsv | awk -F'\t' '$2 == $3 {print $1}' | while read -r f; do cmp -s "stock/$f" "built/$f" || echo "$f"; done
           echo "--- identical files: $(join -t$'\t' stock.tsv built.tsv | awk -F'\t' '$2 == $3 {print $1}' | while read -r f; do cmp -s "stock/$f" "built/$f" && echo x; done | wc -l)"
-      - name: Configure values baked into the stock pages
+      - name: Where differing files differ
+        shell: python3 {0}
         run: |
-          grep -ho "data-vendor='[^']*'\|data-mobile-app-name='[^']*'\|data-enable-experimental-features='[^']*'\|id=\"init-product-branding-url\" value=\"[^\"]*\"" stock/dist/cool.html | sort -u || true
-          diff <(sed 's/></>\n</g' stock/dist/cool.html) <(sed 's/></>\n</g' built/dist/cool.html) | head -80 || true
+          import os, struct
+
+          def png_chunks(data):
+              chunks, i = [], 8
+              while i < len(data):
+                  length, kind = struct.unpack(">I4s", data[i:i + 8])
+                  chunks.append((kind.decode(), data[i + 8:i + 8 + length]))
+                  i += 12 + length
+              return chunks
+
+          for top, _, files in os.walk("stock"):
+              for name in sorted(files):
+                  rel = os.path.relpath(os.path.join(top, name), "stock")
+                  built = os.path.join("built", rel)
+                  if not os.path.isfile(built):
+                      continue
+                  a, b = open(os.path.join("stock", rel), "rb").read(), open(built, "rb").read()
+                  if a == b:
+                      continue
+                  if rel.endswith(".png"):
+                      ca, cb = png_chunks(a), png_chunks(b)
+                      same_pixels = [c for c in ca if c[0] == "IDAT"] == [c for c in cb if c[0] == "IDAT"]
+                      meta = sorted({k for k, v in ca if (k, v) not in cb} | {k for k, v in cb if (k, v) not in ca})
+                      print(f"{rel}: png, pixels {'identical' if same_pixels else 'DIFFER'}, chunks differing: {meta}")
+                  else:
+                      at = next(i for i in range(min(len(a), len(b)) + 1) if i == min(len(a), len(b)) or a[i] != b[i])
+                      print(f"{rel}: {len(a)} vs {len(b)} bytes, first difference at {at}")
+                      print("  stock:", a[max(0, at - 60):at + 60])
+                      print("  built:", b[max(0, at - 60):at + 60])

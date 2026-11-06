@@ -9,6 +9,15 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$PWD
 DESTDIR=${DESTDIR:-$root/stratum/out}
+TRANSLATIONS_TAG=cp-26.04.5-1
+
+# The engine's UI translations, which become dist/l10n/uno/*.json; the repo carries the same tags as this one.
+if [ ! -d engine/translations ]; then
+    git clone --quiet --depth 1 --branch "$TRANSLATIONS_TAG" --filter=blob:none --no-checkout \
+        https://gerrit.collaboraoffice.com/translations engine/translations
+    git -C engine/translations sparse-checkout set --no-cone '/source/*/officecfg/registry/data/org/openoffice/Office/UI.po'
+    git -C engine/translations checkout --quiet
+fi
 
 libtoolize --quiet
 aclocal
@@ -35,18 +44,19 @@ values = {
     "ENABLE_BUNDLE": "true",
     "ENABLE_EXPERIMENTAL": "false",
     "APP_NAME": "Collabora Online Development Edition",
-    "VENDOR": "Collabora Productivity",
+    "VENDOR": "Collabora Productivity Limited",
     "INFO_URL": "https://www.collaboraoffice.org/",
 }
+
+# CODE is configured --with-welcome-url; every other conditional (apps, debug, wasm, branding) is off.
+true_conditionals = {"ENABLE_WELCOME_MESSAGE"}
 
 
 def substitute(match):
     name = match.group(1)
-    # Every AM_CONDITIONAL is false for a server build (no app, debug, wasm, branding or welcome URL).
-    if name.endswith("_TRUE"):
-        return "#"
-    if name.endswith("_FALSE"):
-        return ""
+    if name.endswith(("_TRUE", "_FALSE")):
+        condition, _, branch = name.rpartition("_")
+        return "" if (condition in true_conditionals) == (branch == "TRUE") else "#"
     return values.get(name, "")
 
 
