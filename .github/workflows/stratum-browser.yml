@@ -1,0 +1,70 @@
+name: Stratum browser bundle
+
+on:
+  push:
+    branches: ['stratum/**']
+  workflow_dispatch:
+
+env:
+  STOCK_IMAGE: collabora/code:26.04.5.1.1
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends autoconf automake libtool pkgconf m4 rsync python3-lxml python3-polib
+      - name: Build browser bundle
+        run: stratum/build-browser.sh
+      - name: Size and file list
+        working-directory: stratum/out/usr/share/coolwsd/browser
+        run: |
+          du -sh dist admin-templates
+          find dist -type f | wc -l
+          find dist admin-templates -type f -printf '%s\t%p\n' | sort -k2
+      - uses: actions/upload-artifact@v4
+        with:
+          name: browser
+          path: stratum/out/usr/share/coolwsd/browser
+
+  compare-with-stock:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: browser
+          path: built
+      - name: Copy the stock image's browser tree
+        run: |
+          docker pull "$STOCK_IMAGE"
+          docker create --name stock "$STOCK_IMAGE"
+          docker cp stock:/usr/share/coolwsd/browser stock
+          docker image inspect "$STOCK_IMAGE" --format '{{json .Config.Labels}}'
+      - name: Compare file names and sizes
+        env:
+          LC_ALL: C
+        run: |
+          list() { (cd "$1" && find . -type f -printf '%P\t%s\n' | sort -t$'\t' -k1,1); }
+          list stock > stock.tsv
+          list built > built.tsv
+          echo "stock: $(wc -l < stock.tsv) files, $(du -sb stock | cut -f1) bytes; built: $(wc -l < built.tsv) files, $(du -sb built | cut -f1) bytes"
+          echo "--- only in stock"
+          join -t$'\t' -v1 stock.tsv built.tsv | cut -f1
+          echo "--- only in built"
+          join -t$'\t' -v2 stock.tsv built.tsv | cut -f1
+          echo "--- in both, size differs (path, stock, built)"
+          join -t$'\t' stock.tsv built.tsv | awk -F'\t' '$2 != $3'
+          echo "--- in both, same size but different bytes"
+          join -t$'\t' stock.tsv built.tsv | awk -F'\t' '$2 == $3 {print $1}' | while read -r f; do cmp -s "stock/$f" "built/$f" || echo "$f"; done
+          echo "--- identical files: $(join -t$'\t' stock.tsv built.tsv | awk -F'\t' '$2 == $3 {print $1}' | while read -r f; do cmp -s "stock/$f" "built/$f" && echo x; done | wc -l)"
+      - name: Configure values baked into the stock pages
+        run: |
+          grep -ho "data-vendor='[^']*'\|data-mobile-app-name='[^']*'\|data-enable-experimental-features='[^']*'\|id=\"init-product-branding-url\" value=\"[^\"]*\"" stock/dist/cool.html | sort -u || true
+          diff <(sed 's/></>\n</g' stock/dist/cool.html) <(sed 's/></>\n</g' built/dist/cool.html) | head -80 || true
