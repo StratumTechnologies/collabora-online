@@ -94,8 +94,8 @@ jobs:
                       meta = sorted({k for k, v in ca if (k, v) not in cb} | {k for k, v in cb if (k, v) not in ca})
                       print(f"{rel}: png, pixels {'identical' if same_pixels else 'DIFFER'}, chunks differing: {meta}")
                   else:
-                      # esbuild's --line-limit puts newlines wherever the text before them ends, so compare without them.
-                      a, b = a.replace(b"\n", b""), b.replace(b"\n", b"")
+                      # esbuild's --line-limit breaks lines (inside strings as backslash-newline) wherever the text before them ends.
+                      a, b = (x.replace(b"\\\n", b"").replace(b"\n", b"") for x in (a, b))
                       start = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
                       end = next((i for i, (x, y) in enumerate(zip(a[::-1], b[::-1])) if x != y), 0)
                       print(f"{rel}: ignoring newlines {len(a)} vs {len(b)} bytes; differs in [{start}, {len(a) - end}) of stock;"
