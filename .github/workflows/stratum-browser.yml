@@ -68,7 +68,8 @@ jobs:
       - name: Where differing files differ
         shell: python3 {0}
         run: |
-          import os, struct
+          import os, re, struct
+          from collections import Counter
 
           def png_chunks(data):
               chunks, i = [], 8
@@ -93,7 +94,15 @@ jobs:
                       meta = sorted({k for k, v in ca if (k, v) not in cb} | {k for k, v in cb if (k, v) not in ca})
                       print(f"{rel}: png, pixels {'identical' if same_pixels else 'DIFFER'}, chunks differing: {meta}")
                   else:
-                      at = next(i for i in range(min(len(a), len(b)) + 1) if i == min(len(a), len(b)) or a[i] != b[i])
-                      print(f"{rel}: {len(a)} vs {len(b)} bytes, first difference at {at}")
-                      print("  stock:", a[max(0, at - 60):at + 60])
-                      print("  built:", b[max(0, at - 60):at + 60])
+                      # esbuild's --line-limit puts newlines wherever the text before them ends, so compare without them.
+                      a, b = a.replace(b"\n", b""), b.replace(b"\n", b"")
+                      start = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+                      end = next((i for i, (x, y) in enumerate(zip(a[::-1], b[::-1])) if x != y), 0)
+                      print(f"{rel}: ignoring newlines {len(a)} vs {len(b)} bytes; differs in [{start}, {len(a) - end}) of stock;"
+                            f" same bytes reordered: {Counter(a) == Counter(b)}")
+                      for label, data in (("stock", a), ("built", b)):
+                          print(f"  {label} span starts:", data[max(0, start - 40):start + 80])
+                          print(f"  {label} span ends:  ", data[max(0, len(data) - end - 80):len(data) - end + 40])
+                      for label, data in (("stock", a), ("built", b)):
+                          locales = [x or y for x, y in re.findall(rb'regional(?:\.(\w+)|\["([\w-]+)"\])=\{', data)]
+                          print(f"  {label} datepicker locale order:", b" ".join(locales).decode())
